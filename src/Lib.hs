@@ -80,6 +80,7 @@ showVal lispVal = case lispVal of
   (Atom name) -> name
   (Number contents) -> show contents
   (Bool True) -> "#t"
+  (Bool False) -> "#f"
   (List contents) -> "(" ++ unwordsList contents ++ ")"
   (DottedList head tail) -> "(" ++ unwordsList head ++ " . " ++ showVal tail ++ ")"
 
@@ -102,11 +103,13 @@ readExpr input = case parse parseExpr "lisp" input of
 eval :: LispVal -> LispVal
 eval val = case val of
   (List [Atom "quote", value]) -> value
-  (List (Atom f : args)) -> apply f $ map eval args 
+  (List [Atom fn , v@(List [Atom "quote", _])]) -> apply fn [v] 
+  (List (Atom f : args)) -> apply f $ map eval args
   _ -> val
   
 apply :: String -> [LispVal] -> LispVal
 apply f args = maybe (Bool False) ($ args) $ lookup f primitives
+
 
 primitives :: [(String, [LispVal] -> LispVal)]
 primitives = [("+", numericBinop (+)),
@@ -115,17 +118,32 @@ primitives = [("+", numericBinop (+)),
               ("/", numericBinop div),
               ("mod", numericBinop mod),
               ("quotient", numericBinop quot),
-              ("remainder", numericBinop rem)]
+              ("remainder", numericBinop rem),
+              ("symbol?", unaryOp lispSymbol),
+              ("string?", unaryOp lispString),
+              ("number?", unaryOp lispNumber)]
+  
 
 
 numericBinop :: (Integer -> Integer -> Integer) -> [LispVal] -> LispVal
 numericBinop op params = Number $ foldl1 op $ map unpackNum params
 
+unaryOp :: (LispVal -> LispVal) -> [LispVal] -> LispVal
+unaryOp op [arg] = op arg
+unaryOp _ _ = String "It's a unary operator dummy!"
+
+lispSymbol :: LispVal -> LispVal
+lispSymbol (List [Atom "quote", xs]) = Bool True
+lispSymbol _ = Bool False
+
+lispString :: LispVal -> LispVal
+lispString (String _) = Bool True
+lispString _ = Bool False
+
+lispNumber :: LispVal -> LispVal
+lispNumber (Number _) = Bool True
+lispNumber _ = Bool False
+
 unpackNum :: LispVal -> Integer
 unpackNum (Number n) = n
-unpackNum (String n) = let parsed = reads n :: [(Integer, String)] in
-  if null parsed
-  then 0
-  else fst $ parsed !! 0
-unpackNum (List [n]) = unpackNum n
 unpackNum _ = 0
