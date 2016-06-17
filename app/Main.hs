@@ -6,9 +6,7 @@ import System.IO
 import Control.Monad 
 
 main :: IO ()
-main = forever $ do
-  code <- prompt ">> "
-  putStrLn $ code
+main = until_ (=="quit") (prompt ">> ") $  print . eval . readExpr
 
 prompt :: String -> IO String
 prompt text = do
@@ -16,4 +14,10 @@ prompt text = do
   hFlush stdout
   getLine
 
- 
+until_ :: Monad m => (a -> Bool) -> m a -> (a -> m ()) -> m ()
+until_ pred prompt action = do
+  result <- prompt
+  if pred result
+     then return ()
+     else action result >> until_ pred prompt action
+          
