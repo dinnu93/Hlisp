@@ -4,7 +4,7 @@ import Text.ParserCombinators.Parsec hiding (spaces)
 import System.Environment
 import Control.Monad
 
--- Lisp Abstract Syntax Tree
+-- Lisp Value Data Type
 
 data LispVal = Atom String
              | List [LispVal]
@@ -13,7 +13,6 @@ data LispVal = Atom String
              | String String
              | Bool Bool
              
-
 -- Parser Combinators
 
 symbol :: Parser Char
@@ -90,7 +89,6 @@ unwordsList = unwords . map showVal
 instance Show LispVal where
   show = showVal
   
-
 -- read the expression and give a string 
 
 readExpr :: String -> LispVal 
@@ -102,6 +100,21 @@ readExpr input = case parse parseExpr "lisp" input of
 
 eval :: LispVal -> LispVal
 eval val = case val of
+  (List [Atom "if", pred, conseq, alt]) -> (if (unpackBool (eval pred))
+                                            then (eval conseq)
+                                            else (eval alt))
+  (List [Atom "car", list]) -> case eval list of
+                                    (List (x:xs)) -> x
+                                    (DottedList (x:xs) _) -> x
+                                    _ -> error "car not applicable"
+  (List [Atom "cdr", list]) -> case eval list of
+                                    (List (x:xs)) -> List xs
+                                    (DottedList [l] ls) -> eval ls
+                                    (DottedList (l:ls) lst) -> DottedList ls lst
+                                    _ -> error "cdr not applicable"
+  (List (Atom "cond" : (List [pred, conseq]) : ls)) -> (if (unpackBool (eval pred))
+                                                  then (eval conseq)
+                                                  else (eval (List (Atom "cond" : ls))))    
   (List [Atom "quote", value]) -> value
   (List [Atom fn , v@(List [Atom "quote", _])]) -> apply fn [v] 
   (List (Atom f : args)) -> apply f $ map eval args
@@ -121,7 +134,20 @@ primitives = [("+", numericBinop (+)),
               ("remainder", numericBinop rem),
               ("symbol?", unaryOp lispSymbol),
               ("string?", unaryOp lispString),
-              ("number?", unaryOp lispNumber)]
+              ("number?", unaryOp lispNumber),
+              ("=", numBoolBinop (==)),
+              ("<", numBoolBinop (<)),
+              (">", numBoolBinop (>)),
+              ("/=", numBoolBinop (/=)),
+              (">=", numBoolBinop (>=)),
+              ("<=", numBoolBinop (<=)),
+              ("&&", boolBoolBinop (&&)),
+              ("||", boolBoolBinop (||)),
+              ("string=?", strBoolBinop (==)),
+              ("string<?", strBoolBinop (<)),
+              ("string>?", strBoolBinop (>)),
+              ("string<=?", strBoolBinop (<=)),
+              ("string>=?", strBoolBinop (>=))]
   
 
 
@@ -131,6 +157,20 @@ numericBinop op params = Number $ foldl1 op $ map unpackNum params
 unaryOp :: (LispVal -> LispVal) -> [LispVal] -> LispVal
 unaryOp op [arg] = op arg
 unaryOp _ _ = String "It's a unary operator dummy!"
+
+boolBinop :: (LispVal -> a) -> (a -> a -> Bool) -> [LispVal] -> LispVal
+boolBinop unpack op args 
+  | l == 2 = Bool $ op f s
+  | otherwise = error "It's a binary operator dummy!"  
+  where l = length args 
+        f = unpack (head args)
+        s = unpack (last args)
+
+numBoolBinop = boolBinop unpackNum
+strBoolBinop = boolBinop unpackStr
+boolBoolBinop = boolBinop unpackBool
+          
+-- Type predicates check
 
 lispSymbol :: LispVal -> LispVal
 lispSymbol (List [Atom "quote", xs]) = Bool True
@@ -146,4 +186,12 @@ lispNumber _ = Bool False
 
 unpackNum :: LispVal -> Integer
 unpackNum (Number n) = n
-unpackNum _ = 0
+unpackNum v = error $ (show v) ++ " is not a valid number!"
+
+unpackStr :: LispVal -> String
+unpackStr (String s) = s
+unpackStr v = error $ (show v) ++ " is not a valid string!"
+
+unpackBool :: LispVal -> Bool
+unpackBool (Bool b) = b
+unpackBool v = error $ (show v) ++ " is not a valid bool!"
