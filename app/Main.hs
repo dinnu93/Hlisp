@@ -6,7 +6,11 @@ import System.IO
 import Control.Monad 
 
 main :: IO ()
-main = until_ (=="quit") (prompt ">> ") $  print . eval . readExpr
+main = do env <- nullEnv
+          until_ (=="quit") (prompt ">> ") $ evalAndPrint env
+
+evalAndPrint :: Env -> String -> IO ()
+evalAndPrint env expr = (liftM show . eval env . readExpr $ expr) >>= putStrLn
 
 prompt :: String -> IO String
 prompt text = do

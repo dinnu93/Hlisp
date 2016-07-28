@@ -3,7 +3,7 @@ module Lib where
 import Text.ParserCombinators.Parsec hiding (spaces)
 import System.Environment
 import Control.Monad
-
+import Data.IORef
 -- Lisp Value Data Type
 
 data LispVal = Atom String
@@ -98,28 +98,43 @@ readExpr input = case parse parseExpr "lisp" input of
   
 -- Evaluator
 
-eval :: LispVal -> LispVal
-eval val = case val of
-  (List [Atom "if", pred, conseq, alt]) -> (if (unpackBool (eval pred))
-                                            then (eval conseq)
-                                            else (eval alt))
-  (List [Atom "car", list]) -> case eval list of
-                                    (List (x:xs)) -> x
-                                    (DottedList (x:xs) _) -> x
-                                    _ -> error "car not applicable"
-  (List [Atom "cdr", list]) -> case eval list of
-                                    (List (x:xs)) -> List xs
-                                    (DottedList [l] ls) -> eval ls
-                                    (DottedList (l:ls) lst) -> DottedList ls lst
-                                    _ -> error "cdr not applicable"
-  (List (Atom "cond" : (List [pred, conseq]) : ls)) -> (if (unpackBool (eval pred))
-                                                  then (eval conseq)
-                                                  else (eval (List (Atom "cond" : ls))))    
-  (List [Atom "quote", value]) -> value
-  (List [Atom fn , v@(List [Atom "quote", _])]) -> apply fn [v] 
-  (List (Atom f : args)) -> apply f $ map eval args
-  _ -> val
-  
+eval :: Env -> LispVal -> IO LispVal
+eval env (Atom var) = getVar env var
+eval env (List [Atom "quote", value]) = return value
+eval env (List [Atom "if", pred, conseq, alt]) = do result <- eval env pred
+                                                    if (unpackBool result)
+                                                      then eval env conseq
+                                                      else eval env alt
+                                                      
+eval env (List [Atom "car", list]) = do value <- eval env list
+                                        case value of
+                                          (List (x:xs)) -> return x
+                                          (DottedList (x:xs) _) -> return x
+                                          _ -> error "car not applicable"
+                                   
+eval env (List [Atom "cdr", list]) = do value <- eval env list 
+                                        case value of
+                                          (List (x:xs)) -> return $ List xs
+                                          (DottedList [l] ls) -> eval env ls
+                                          (DottedList (l:ls) lst) -> return $ DottedList ls lst
+                                          _ -> error "cdr not applicable"
+                                   
+eval env (List (Atom "cond" : (List [pred, conseq]) : ls)) = do result <- eval env pred
+                                                                if (unpackBool result)
+                                                                  then (eval env conseq)
+                                                                  else (eval env (List (Atom "cond" : ls)))
+                                                                  
+eval env (List [Atom "set!", Atom var, form]) = do value <- eval env form
+                                                   setVar env var value
+
+eval env (List [Atom "define", Atom var, form]) = do value <- eval env form
+                                                     defineVar env var value
+                                                     
+eval env (List [Atom fn , v@(List [Atom "quote", _])]) = return $ apply fn [v] 
+eval env (List (Atom f : args)) = do argList <- sequence $ map (eval env) args
+                                     return $ apply f argList
+eval env val = return val
+
 apply :: String -> [LispVal] -> LispVal
 apply f args = maybe (Bool False) ($ args) $ lookup f primitives
 
@@ -195,3 +210,34 @@ unpackStr v = error $ (show v) ++ " is not a valid string!"
 unpackBool :: LispVal -> Bool
 unpackBool (Bool b) = b
 unpackBool v = error $ (show v) ++ " is not a valid bool!"
+
+-- Adding Variables and Assignment
+
+type Env = IORef [(String, IORef LispVal)]
+
+nullEnv :: IO Env
+nullEnv = newIORef []
+
+isBound :: Env -> String -> IO Bool
+isBound envRef var = readIORef envRef >>= return . maybe False (const True) . lookup var
+
+getVar :: Env -> String -> IO LispVal
+getVar envRef var = do env <- readIORef envRef
+                       nullLispValRef <- newIORef $ String $ "Error: No variable named: " ++ var
+                       readIORef . maybe nullLispValRef id . lookup var $ env 
+
+setVar :: Env -> String -> LispVal -> IO LispVal
+setVar envRef var value = do env <- readIORef envRef
+                             maybe (return ()) (flip writeIORef value) (lookup var env)
+                             return value
+
+defineVar :: Env -> String -> LispVal -> IO LispVal
+defineVar envRef var value = do alreadyDefined <- isBound envRef var
+                                if alreadyDefined
+                                  then do setVar envRef var value
+                                          return value
+                                  else do valueRef <- newIORef value
+                                          env <- readIORef envRef
+                                          writeIORef envRef ((var, valueRef) : env)
+                                          return value
+
