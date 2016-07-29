@@ -12,6 +12,11 @@ data LispVal = Atom String
              | Number Integer
              | String String
              | Bool Bool
+             | PrimitiveFunc (LispVal -> LispVal)
+             | Func { params :: [String],
+                      vararg :: (Maybe String),
+                      body :: [LispVal],
+                      closure :: Env }
              
 -- Parser Combinators
 
@@ -82,7 +87,12 @@ showVal lispVal = case lispVal of
   (Bool False) -> "#f"
   (List contents) -> "(" ++ unwordsList contents ++ ")"
   (DottedList head tail) -> "(" ++ unwordsList head ++ " . " ++ showVal tail ++ ")"
-
+  (PrimitiveFunc _) -> "<primitive>"
+  (Func {params = args,vararg = varargs,body = body,closure = env}) -> "(lambda (" ++ unwords (map show args) ++
+                                                                       (case varargs of
+                                                                          Nothing -> ""
+                                                                          Just arg -> " . " ++ arg) ++ ") ...)"
+    
 unwordsList :: [LispVal] -> String
 unwordsList = unwords . map showVal
 
