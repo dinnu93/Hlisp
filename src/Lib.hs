@@ -12,7 +12,7 @@ data LispVal = Atom String
              | Number Integer
              | String String
              | Bool Bool
-             | PrimitiveFunc (LispVal -> LispVal)
+             | PrimitiveFunc ([LispVal] -> LispVal)
              | Func { params :: [String],
                       vararg :: (Maybe String),
                       body :: [LispVal],
@@ -140,14 +140,44 @@ eval env (List [Atom "set!", Atom var, form]) = do value <- eval env form
 eval env (List [Atom "define", Atom var, form]) = do value <- eval env form
                                                      defineVar env var value
                                                      
-eval env (List [Atom fn , v@(List [Atom "quote", _])]) = return $ apply fn [v] 
-eval env (List (Atom f : args)) = do argList <- sequence $ map (eval env) args
-                                     return $ apply f argList
+eval env (List (Atom "define" : List (Atom var : params) : body)) =
+  do value <- makeNormalFunc env params body
+     defineVar env var value
+
+eval env (List (Atom "define" : DottedList (Atom var : params) varargs : body)) =
+  do value <- makeVarArgs varargs env params body
+     defineVar env var value
+
+eval env (List (Atom "lambda" : List params : body)) = makeNormalFunc env params body
+eval env (List (Atom "lambda" : DottedList params varargs : body)) = makeVarArgs varargs env params body
+eval env (List (Atom "lambda" : varargs@(Atom _) : body)) = makeVarArgs varargs env [] body
+eval env (List [fn , v@(List [Atom "quote", _])]) = do func <- eval env fn
+                                                       apply func [v] 
+eval env (List (f : args)) = do func <- eval env f
+                                argList <- mapM (eval env) args
+                                apply func argList
+                                
 eval env val = return val
 
-apply :: String -> [LispVal] -> LispVal
-apply f args = maybe (Bool False) ($ args) $ lookup f primitives
+apply :: LispVal -> [LispVal] -> IO LispVal
+apply (PrimitiveFunc func) args = return $ func args
+apply (Func params varargs body closure) args = (if num params /= num args && varargs == Nothing
+                                                 then error "Insufficient arguments!"
+                                                 else (bindVars closure $ zip params args) >>= bindVarArgs varargs >>= evalBody)
+  where remainingArgs = drop (length params) args
+        num = toInteger . length
+        evalBody env = liftM last $ mapM (eval env) body
+        bindVarArgs arg env = case arg of
+                                Just argName -> bindVars env [(argName, List $ remainingArgs)]
+                                Nothing -> return env
 
+makeFunc varargs env params body = return $ Func (map showVal params) varargs body env
+makeNormalFunc = makeFunc Nothing
+makeVarArgs = makeFunc . Just . showVal
+
+primitiveBindings :: IO Env
+primitiveBindings = nullEnv >>= (flip bindVars $ map makePrimitiveFunc primitives)
+  where makePrimitiveFunc (var, func) = (var, PrimitiveFunc func)
 
 primitives :: [(String, [LispVal] -> LispVal)]
 primitives = [("+", numericBinop (+)),
@@ -251,3 +281,9 @@ defineVar envRef var value = do alreadyDefined <- isBound envRef var
                                           writeIORef envRef ((var, valueRef) : env)
                                           return value
 
+
+bindVars :: Env -> [(String, LispVal)] -> IO Env
+bindVars envRef bindings = readIORef envRef >>= extendEnv bindings >>= newIORef
+  where extendEnv bindings env = liftM (++ env) (mapM addBinding bindings)
+        addBinding (var, value) = do ref <- newIORef value
+                                     return (var, ref)

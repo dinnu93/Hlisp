@@ -6,7 +6,7 @@ import System.IO
 import Control.Monad 
 
 main :: IO ()
-main = do env <- nullEnv
+main = do env <- primitiveBindings
           until_ (=="quit") (prompt ">> ") $ evalAndPrint env
 
 evalAndPrint :: Env -> String -> IO ()
